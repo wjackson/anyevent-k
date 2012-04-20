@@ -4,6 +4,8 @@ BEGIN {
 }
 use Moose;
 use namespace::autoclean;
+use AnyEvent;
+use Try::Tiny;
 
 extends 'K';
 
@@ -11,13 +13,21 @@ has reader => (
     is      => 'ro',
     isa     => 'Object',
     builder => '_build_reader',
+    lazy_build => 1,
 );
 
 sub _build_reader {
     my ($self) = @_;
 
     return AnyEvent->io( fh => $self->handle, poll => 'r', cb => sub {
-        $self->on_recv( $self->recv );
+        try {
+            $self->on_recv( $self->recv );
+        }
+        catch {
+            $self->clear_reader;
+            $self->clear_handle;
+            $self->on_recv(undef, $_);
+        };
     });
 }
 
@@ -28,12 +38,12 @@ has recv_cb => (
 );
 
 sub on_recv {
-    my ($self, $msg) = @_;
+    my ($self, $msg, $err) = @_;
 
     confess 'Message received but no recv_cb is defined'
         if !$self->has_recv_cb;
 
-    $self->recv_cb->($msg);
+    $self->recv_cb->($msg, $err);
 
     return;
 }
@@ -41,6 +51,12 @@ sub on_recv {
 override 'cmd' => sub {
     confess q/cmds that want responses aren't supported yet/;
 };
+
+sub BUILD {
+    my ($self) = @_;
+
+    $self->reader;
+}
 
 __PACKAGE__->meta->make_immutable;
 1;
